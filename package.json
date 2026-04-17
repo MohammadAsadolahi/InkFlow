@@ -1,0 +1,172 @@
+{
+    "name": "snich",
+    "displayName": "Snich",
+    "description": "Real-time, lossless capture of every Copilot Chat mutation into local PostgreSQL",
+    "version": "0.1.0",
+    "publisher": "snich",
+    "license": "MIT",
+    "engines": {
+        "vscode": "^1.100.0"
+    },
+    "categories": [
+        "Other"
+    ],
+    "extensionKind": [
+        "workspace"
+    ],
+    "activationEvents": [
+        "onStartupFinished"
+    ],
+    "main": "./dist/extension.js",
+    "contributes": {
+        "configuration": {
+            "title": "Snich",
+            "properties": {
+                "snich.database.host": {
+                    "type": "string",
+                    "default": "localhost",
+                    "scope": "application",
+                    "description": "PostgreSQL host"
+                },
+                "snich.database.port": {
+                    "type": "integer",
+                    "default": 5432,
+                    "minimum": 1,
+                    "maximum": 65535,
+                    "scope": "application",
+                    "description": "PostgreSQL port"
+                },
+                "snich.database.name": {
+                    "type": "string",
+                    "default": "snich",
+                    "scope": "application",
+                    "description": "PostgreSQL database name"
+                },
+                "snich.database.user": {
+                    "type": "string",
+                    "default": "snich",
+                    "scope": "application",
+                    "description": "PostgreSQL user"
+                },
+                "snich.database.ssl": {
+                    "type": "boolean",
+                    "default": false,
+                    "scope": "application",
+                    "description": "Use SSL for PostgreSQL connection"
+                },
+                "snich.watcher.enabled": {
+                    "type": "boolean",
+                    "default": true,
+                    "description": "Enable file watching for chat sessions"
+                },
+                "snich.watcher.debounceMs": {
+                    "type": "integer",
+                    "default": 300,
+                    "minimum": 50,
+                    "maximum": 5000,
+                    "description": "Debounce interval for file change events in milliseconds"
+                },
+                "snich.watcher.watchVariants": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "enum": [
+                            "stable",
+                            "insiders",
+                            "exploration",
+                            "vscodium"
+                        ]
+                    },
+                    "default": [
+                        "stable"
+                    ],
+                    "description": "VS Code variants to watch"
+                },
+                "snich.watcher.periodicScanSeconds": {
+                    "type": "integer",
+                    "default": 30,
+                    "minimum": 5,
+                    "maximum": 300,
+                    "description": "Periodic scan interval in seconds"
+                },
+                "snich.ingestion.filterInputState": {
+                    "type": "boolean",
+                    "default": true,
+                    "description": "Filter out inputState keystroke noise events"
+                },
+                "snich.privacy.redactContent": {
+                    "type": "boolean",
+                    "default": false,
+                    "description": "Redact message content before storing"
+                },
+                "snich.retention.maxAgeDays": {
+                    "type": [
+                        "integer",
+                        "null"
+                    ],
+                    "default": null,
+                    "minimum": 7,
+                    "description": "Maximum age of stored data in days (null = unlimited)"
+                },
+                "snich.export.defaultFormat": {
+                    "type": "string",
+                    "enum": [
+                        "markdown",
+                        "html",
+                        "json"
+                    ],
+                    "default": "markdown",
+                    "description": "Default export format"
+                },
+                "snich.export.includeMetadata": {
+                    "type": "boolean",
+                    "default": true,
+                    "description": "Include metadata in exports"
+                },
+                "snich.export.includeForks": {
+                    "type": "boolean",
+                    "default": true,
+                    "description": "Include fork history in exports"
+                },
+                "snich.export.includeDeleted": {
+                    "type": "boolean",
+                    "default": false,
+                    "description": "Include soft-deleted messages in exports"
+                }
+            }
+        },
+        "commands": [
+            {
+                "command": "snich.showStatus",
+                "title": "Snich: Show Status"
+            },
+            {
+                "command": "snich.reconnect",
+                "title": "Snich: Reconnect Database"
+            },
+            {
+                "command": "snich.scanNow",
+                "title": "Snich: Scan Now"
+            }
+        ]
+    },
+    "scripts": {
+        "vscode:prepublish": "npm run build",
+        "build": "node esbuild.js --production",
+        "watch": "node esbuild.js --watch",
+        "lint": "eslint src",
+        "test": "vitest run",
+        "test:watch": "vitest",
+        "test:e2e": "vitest run --config vitest.e2e.config.ts"
+    },
+    "devDependencies": {
+        "@types/node": "^20.17.0",
+        "@types/vscode": "^1.100.0",
+        "esbuild": "^0.25.0",
+        "vitest": "^3.1.0",
+        "typescript": "^5.7.0"
+    },
+    "dependencies": {
+        "postgres": "^3.4.7"
+    }
+}
