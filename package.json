@@ -4,6 +4,10 @@
     "description": "Real-time, lossless capture of every Copilot Chat mutation into local PostgreSQL",
     "version": "0.1.0",
     "publisher": "snich",
+    "repository": {
+        "type": "git",
+        "url": "https://github.com/snich/snich"
+    },
     "license": "MIT",
     "engines": {
         "vscode": "^1.100.0"
@@ -30,7 +34,7 @@
                 },
                 "snich.database.port": {
                     "type": "integer",
-                    "default": 5432,
+                    "default": 5434,
                     "minimum": 1,
                     "maximum": 65535,
                     "scope": "application",
@@ -47,6 +51,12 @@
                     "default": "snich",
                     "scope": "application",
                     "description": "PostgreSQL user"
+                },
+                "snich.database.password": {
+                    "type": "string",
+                    "default": "snich_dev",
+                    "scope": "application",
+                    "description": "PostgreSQL password"
                 },
                 "snich.database.ssl": {
                     "type": "boolean",
@@ -154,6 +164,7 @@
         "vscode:prepublish": "npm run build",
         "build": "node esbuild.js --production",
         "watch": "node esbuild.js --watch",
+        "package": "npm run build && vsce package --no-dependencies",
         "lint": "eslint src",
         "test": "vitest run",
         "test:watch": "vitest",
@@ -162,9 +173,10 @@
     "devDependencies": {
         "@types/node": "^20.17.0",
         "@types/vscode": "^1.100.0",
+        "@vscode/vsce": "^3.9.0",
         "esbuild": "^0.25.0",
-        "vitest": "^3.1.0",
-        "typescript": "^5.7.0"
+        "typescript": "^5.7.0",
+        "vitest": "^3.1.0"
     },
     "dependencies": {
         "postgres": "^3.4.7"

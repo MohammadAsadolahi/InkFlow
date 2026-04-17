@@ -11,6 +11,7 @@ import { discoverWorkspaces, listChatFiles } from './discovery/workspaceResolver
 import type postgres from 'postgres';
 import type { DiscoveredWorkspace, SnichConfig } from './types';
 import * as fs from 'fs';
+import * as path from 'path';
 
 let sql: postgres.Sql | null = null;
 let watcher: ChatFileWatcher | null = null;
@@ -37,15 +38,15 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         vscode.commands.registerCommand('snich.scanNow', () => scanNow(log)),
     );
 
-    // Lazy init — don't block activation
+    // Lazy init — don't block activation, but give UI time to be ready
     setTimeout(async () => {
         try {
             await initializeSnich(context, log);
         } catch (err) {
             log.error('Snich initialization failed', err);
-            vscode.window.showWarningMessage('Snich: Failed to connect to database. Check Output panel for details.');
+            vscode.window.showWarningMessage('Snich: Failed to connect to database. Check Output → Snich for details.');
         }
-    }, 0);
+    }, 3000); // 3s delay so password prompt doesn't get lost
 }
 
 export async function deactivate(): Promise<void> {
@@ -81,33 +82,40 @@ async function initializeSnich(
     context: vscode.ExtensionContext,
     log: vscode.LogOutputChannel,
 ): Promise<void> {
+    log.info('Initializing Snich...');
     const config = loadConfig(vscode.workspace);
 
     if (!config.watcher.enabled) {
-        log.info('Snich watcher is disabled');
+        log.info('Snich watcher is disabled via settings');
         return;
     }
 
-    // Get password from SecretStorage or env var
+    log.info(`Config: host=${config.database.host}, port=${config.database.port}, db=${config.database.name}, user=${config.database.user}`);
+    log.info(`Watcher config: debounce=${config.watcher.debounceMs}ms, scanInterval=${config.watcher.periodicScanSeconds}s, variants=${config.watcher.watchVariants.join(',')}`);
+
+    // Get password: env var URL > settings > SecretStorage > prompt
     let password: string;
     if (process.env.SNICH_DATABASE_URL) {
+        log.info('Using SNICH_DATABASE_URL environment variable');
         password = ''; // Not needed when using connection URL
     } else {
-        const stored = await context.secrets.get('snich.database.password');
-        if (!stored) {
-            const input = await vscode.window.showInputBox({
-                prompt: 'Enter PostgreSQL password for Snich',
-                password: true,
-                ignoreFocusOut: true,
-            });
-            if (!input) {
-                log.warn('No password provided, Snich will not start');
+        // Read password from settings (default: snich_dev)
+        const dbConfig = vscode.workspace.getConfiguration('snich.database');
+        const settingsPassword = dbConfig.get<string>('password', '');
+        if (settingsPassword) {
+            password = settingsPassword;
+            log.info('Using password from settings');
+        } else {
+            // Fallback to SecretStorage
+            const stored = await context.secrets.get('snich.database.password');
+            if (stored) {
+                password = stored;
+                log.info('Using password from SecretStorage');
+            } else {
+                log.warn('No database password configured. Set snich.database.password in settings.');
+                vscode.window.showWarningMessage('Snich: No database password. Set "snich.database.password" in settings or use "Snich: Reconnect Database".');
                 return;
             }
-            await context.secrets.store('snich.database.password', input);
-            password = input;
-        } else {
-            password = stored;
         }
     }
 
@@ -119,11 +127,13 @@ async function initializeSnich(
     });
 
     // Health check
+    log.info(`Connecting to database at ${config.database.host}:${config.database.port}/${config.database.name}...`);
     const healthy = await healthCheck(sql);
     if (!healthy) {
-        throw new Error('Database health check failed');
+        log.error('Database health check failed — cannot reach PostgreSQL. Is the database running?');
+        throw new Error(`Database health check failed. Verify PostgreSQL is running on ${config.database.host}:${config.database.port}`);
     }
-    log.info('Database connected');
+    log.info('Database connected successfully');
 
     // Run migrations
     await runMigrations(sql, log);
@@ -208,12 +218,19 @@ async function discoverAndWatch(config: SnichConfig, log: vscode.LogOutputChanne
     if (!sql || !watcher) return;
 
     const workspaces = discoverWorkspaces(config.watcher.watchVariants);
-    log.info(`Discovered ${workspaces.length} workspaces`);
+    log.info(`Discovered ${workspaces.length} workspaces with chat sessions`);
 
+    let totalFiles = 0;
     for (const ws of workspaces) {
         await ensureWorkspaceId(ws);
         watcher.watchDirectory(ws.chatSessionsDir);
+        const files = listChatFiles(ws.chatSessionsDir);
+        totalFiles += files.length;
+        if (files.length > 0) {
+            log.debug(`  ${ws.displayName ?? ws.storageHash}: ${files.length} JSONL files in ${ws.chatSessionsDir}`);
+        }
     }
+    log.info(`Watching ${workspaces.length} directories, ${totalFiles} total JSONL files`);
 }
 
 async function ensureWorkspaceId(ws: DiscoveredWorkspace): Promise<number> {
@@ -240,7 +257,7 @@ async function handleFileChanged(filePath: string, config: SnichConfig, log: vsc
 
         const ingested = await processor.processFileChange(filePath, workspaceId);
         if (ingested > 0) {
-            log.debug(`Ingested ${ingested} events from ${filePath}`);
+            log.info(`Captured ${ingested} events from ${path.basename(filePath)}`);
         }
     } catch (err) {
         log.error(`Error processing ${filePath}`, err);

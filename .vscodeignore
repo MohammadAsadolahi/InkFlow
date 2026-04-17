@@ -4,12 +4,17 @@ src
 test
 out
 node_modules
+.git
 .gitignore
 tsconfig.json
 esbuild.js
 vitest.config.ts
 vitest.e2e.config.ts
+docker-compose.yml
+setup.sh
+setup.ps1
 ARCHITECTURE*.md
 ANALYSIS*.md
 RESEARCH*.md
 *.map
+*.vsix
