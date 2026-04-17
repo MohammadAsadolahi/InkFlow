@@ -8,7 +8,7 @@ describe('readNewLines', () => {
     let tmpDir: string;
 
     beforeEach(() => {
-        tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'snich-reader-'));
+        tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'inkflow-reader-'));
     });
 
     afterEach(() => {
@@ -163,7 +163,7 @@ describe('readHeaderHash', () => {
     let tmpDir: string;
 
     beforeEach(() => {
-        tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'snich-header-'));
+        tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'inkflow-header-'));
     });
 
     afterEach(() => {

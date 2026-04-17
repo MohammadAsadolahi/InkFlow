@@ -130,7 +130,7 @@ export interface DiscoveredWorkspace {
 
 // --- Config ---
 
-export interface SnichConfig {
+export interface InkFlowConfig {
     database: {
         host: string;
         port: number;

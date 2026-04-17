@@ -1,12 +1,12 @@
 {
-    "name": "snich",
-    "displayName": "Snich",
+    "name": "inkflow",
+    "displayName": "InkFlow",
     "description": "Real-time, lossless capture of every Copilot Chat mutation into local PostgreSQL",
     "version": "0.1.0",
-    "publisher": "snich",
+    "publisher": "inkflow",
     "repository": {
         "type": "git",
-        "url": "https://github.com/snich/snich"
+        "url": "https://github.com/inkflow/inkflow"
     },
     "license": "MIT",
     "engines": {
@@ -24,15 +24,15 @@
     "main": "./dist/extension.js",
     "contributes": {
         "configuration": {
-            "title": "Snich",
+            "title": "InkFlow",
             "properties": {
-                "snich.database.host": {
+                "inkflow.database.host": {
                     "type": "string",
                     "default": "localhost",
                     "scope": "application",
                     "description": "PostgreSQL host"
                 },
-                "snich.database.port": {
+                "inkflow.database.port": {
                     "type": "integer",
                     "default": 5434,
                     "minimum": 1,
@@ -40,43 +40,43 @@
                     "scope": "application",
                     "description": "PostgreSQL port"
                 },
-                "snich.database.name": {
+                "inkflow.database.name": {
                     "type": "string",
-                    "default": "snich",
+                    "default": "inkflow",
                     "scope": "application",
                     "description": "PostgreSQL database name"
                 },
-                "snich.database.user": {
+                "inkflow.database.user": {
                     "type": "string",
-                    "default": "snich",
+                    "default": "inkflow",
                     "scope": "application",
                     "description": "PostgreSQL user"
                 },
-                "snich.database.password": {
+                "inkflow.database.password": {
                     "type": "string",
-                    "default": "snich_dev",
+                    "default": "inkflow_dev",
                     "scope": "application",
                     "description": "PostgreSQL password"
                 },
-                "snich.database.ssl": {
+                "inkflow.database.ssl": {
                     "type": "boolean",
                     "default": false,
                     "scope": "application",
                     "description": "Use SSL for PostgreSQL connection"
                 },
-                "snich.watcher.enabled": {
+                "inkflow.watcher.enabled": {
                     "type": "boolean",
                     "default": true,
                     "description": "Enable file watching for chat sessions"
                 },
-                "snich.watcher.debounceMs": {
+                "inkflow.watcher.debounceMs": {
                     "type": "integer",
                     "default": 300,
                     "minimum": 50,
                     "maximum": 5000,
                     "description": "Debounce interval for file change events in milliseconds"
                 },
-                "snich.watcher.watchVariants": {
+                "inkflow.watcher.watchVariants": {
                     "type": "array",
                     "items": {
                         "type": "string",
@@ -92,24 +92,24 @@
                     ],
                     "description": "VS Code variants to watch"
                 },
-                "snich.watcher.periodicScanSeconds": {
+                "inkflow.watcher.periodicScanSeconds": {
                     "type": "integer",
                     "default": 30,
                     "minimum": 5,
                     "maximum": 300,
                     "description": "Periodic scan interval in seconds"
                 },
-                "snich.ingestion.filterInputState": {
+                "inkflow.ingestion.filterInputState": {
                     "type": "boolean",
                     "default": true,
                     "description": "Filter out inputState keystroke noise events"
                 },
-                "snich.privacy.redactContent": {
+                "inkflow.privacy.redactContent": {
                     "type": "boolean",
                     "default": false,
                     "description": "Redact message content before storing"
                 },
-                "snich.retention.maxAgeDays": {
+                "inkflow.retention.maxAgeDays": {
                     "type": [
                         "integer",
                         "null"
@@ -118,7 +118,7 @@
                     "minimum": 7,
                     "description": "Maximum age of stored data in days (null = unlimited)"
                 },
-                "snich.export.defaultFormat": {
+                "inkflow.export.defaultFormat": {
                     "type": "string",
                     "enum": [
                         "markdown",
@@ -128,17 +128,17 @@
                     "default": "markdown",
                     "description": "Default export format"
                 },
-                "snich.export.includeMetadata": {
+                "inkflow.export.includeMetadata": {
                     "type": "boolean",
                     "default": true,
                     "description": "Include metadata in exports"
                 },
-                "snich.export.includeForks": {
+                "inkflow.export.includeForks": {
                     "type": "boolean",
                     "default": true,
                     "description": "Include fork history in exports"
                 },
-                "snich.export.includeDeleted": {
+                "inkflow.export.includeDeleted": {
                     "type": "boolean",
                     "default": false,
                     "description": "Include soft-deleted messages in exports"
@@ -147,16 +147,16 @@
         },
         "commands": [
             {
-                "command": "snich.showStatus",
-                "title": "Snich: Show Status"
+                "command": "inkflow.showStatus",
+                "title": "InkFlow: Show Status"
             },
             {
-                "command": "snich.reconnect",
-                "title": "Snich: Reconnect Database"
+                "command": "inkflow.reconnect",
+                "title": "InkFlow: Reconnect Database"
             },
             {
-                "command": "snich.scanNow",
-                "title": "Snich: Scan Now"
+                "command": "inkflow.scanNow",
+                "title": "InkFlow: Scan Now"
             }
         ]
     },

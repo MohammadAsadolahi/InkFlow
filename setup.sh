@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ──────────────────────────────────────────────────────────────
-#  Snich – One-command setup
+#  InkFlow – One-command setup
 #
 #  Usage:   ./setup.sh
 #
@@ -31,7 +31,7 @@ cd "$SCRIPT_DIR"
 
 echo ""
 echo -e "${CYAN}╔══════════════════════════════════════════╗${NC}"
-echo -e "${CYAN}║          Snich – Setup Wizard            ║${NC}"
+echo -e "${CYAN}║          InkFlow – Setup Wizard            ║${NC}"
 echo -e "${CYAN}╚══════════════════════════════════════════╝${NC}"
 echo ""
 
@@ -76,22 +76,22 @@ fi
 echo ""
 info "Starting PostgreSQL database..."
 
-DB_PORT="${SNICH_DB_PORT:-5434}"
-DB_PASSWORD="${SNICH_DB_PASSWORD:-snich_dev}"
+DB_PORT="${INKFLOW_DB_PORT:-5434}"
+DB_PASSWORD="${INKFLOW_DB_PASSWORD:-inkflow_dev}"
 
 # Check if port is already in use by another service
-if docker ps --format '{{.Names}}' 2>/dev/null | grep -q "snich-snich-db"; then
-    ok "Snich database already running"
+if docker ps --format '{{.Names}}' 2>/dev/null | grep -q "inkflow-inkflow-db"; then
+    ok "InkFlow database already running"
 else
-    SNICH_DB_PORT="$DB_PORT" SNICH_DB_PASSWORD="$DB_PASSWORD" docker compose up -d 2>&1 | grep -v "^$"
+    INKFLOW_DB_PORT="$DB_PORT" INKFLOW_DB_PASSWORD="$DB_PASSWORD" docker compose up -d 2>&1 | grep -v "^$"
     
     # Wait for healthy
     info "Waiting for database to be ready..."
     RETRIES=30
-    until docker exec snich-snich-db-1 pg_isready -U snich &>/dev/null 2>&1; do
+    until docker exec inkflow-inkflow-db-1 pg_isready -U inkflow &>/dev/null 2>&1; do
         RETRIES=$((RETRIES - 1))
         if [ "$RETRIES" -le 0 ]; then
-            fail "Database did not become ready in time. Check: docker logs snich-snich-db-1"
+            fail "Database did not become ready in time. Check: docker logs inkflow-inkflow-db-1"
         fi
         sleep 1
     done
@@ -109,7 +109,7 @@ node esbuild.js --production
 ok "Build complete"
 
 info "Packaging VSIX..."
-VSIX_FILE="snich-$(node -p "require('./package.json').version").vsix"
+VSIX_FILE="inkflow-$(node -p "require('./package.json').version").vsix"
 npx vsce package --no-dependencies --allow-missing-repository 2>&1 | tail -1
 if [ ! -f "$VSIX_FILE" ]; then
     fail "VSIX file not found: $VSIX_FILE"
@@ -133,7 +133,7 @@ fi
 echo ""
 info "Configuring VS Code settings..."
 
-DB_URL="postgres://snich:${DB_PASSWORD}@localhost:${DB_PORT}/snich"
+DB_URL="postgres://inkflow:${DB_PASSWORD}@localhost:${DB_PORT}/inkflow"
 
 # Set the environment variable for the current user's VS Code
 # We use VS Code settings since env vars don't persist for GUI apps
@@ -155,9 +155,9 @@ if [ -n "$CODE_CMD" ]; then
     if [ -d "$SETTINGS_DIR" ]; then
         SETTINGS_FILE="$SETTINGS_DIR/settings.json"
         if [ -f "$SETTINGS_FILE" ]; then
-            # Check if snich settings already exist
-            if grep -q "snich.database" "$SETTINGS_FILE" 2>/dev/null; then
-                ok "Snich database settings already configured"
+            # Check if inkflow settings already exist
+            if grep -q "inkflow.database" "$SETTINGS_FILE" 2>/dev/null; then
+                ok "InkFlow database settings already configured"
             else
                 # Use node to safely merge JSON settings
                 node -e "
@@ -165,20 +165,20 @@ if [ -n "$CODE_CMD" ]; then
                     const path = '$SETTINGS_FILE'.replace(/\\\\/g, '/');
                     let settings = {};
                     try { settings = JSON.parse(fs.readFileSync(path, 'utf8')); } catch {}
-                    settings['snich.database.host'] = 'localhost';
-                    settings['snich.database.port'] = $DB_PORT;
-                    settings['snich.database.name'] = 'snich';
-                    settings['snich.database.user'] = 'snich';
+                    settings['inkflow.database.host'] = 'localhost';
+                    settings['inkflow.database.port'] = $DB_PORT;
+                    settings['inkflow.database.name'] = 'inkflow';
+                    settings['inkflow.database.user'] = 'inkflow';
                     fs.writeFileSync(path, JSON.stringify(settings, null, 4) + '\n');
                 " 2>/dev/null && ok "VS Code settings updated" || warn "Could not update settings automatically"
             fi
         else
             # Create settings file
             echo "{
-    \"snich.database.host\": \"localhost\",
-    \"snich.database.port\": $DB_PORT,
-    \"snich.database.name\": \"snich\",
-    \"snich.database.user\": \"snich\"
+    \"inkflow.database.host\": \"localhost\",
+    \"inkflow.database.port\": $DB_PORT,
+    \"inkflow.database.name\": \"inkflow\",
+    \"inkflow.database.user\": \"inkflow\"
 }" > "$SETTINGS_FILE"
             ok "VS Code settings created"
         fi
@@ -191,15 +191,15 @@ echo -e "${GREEN}╔════════════════════
 echo -e "${GREEN}║          Setup Complete! 🎉              ║${NC}"
 echo -e "${GREEN}╚══════════════════════════════════════════╝${NC}"
 echo ""
-echo -e "  ${CYAN}Database:${NC}  postgresql://localhost:${DB_PORT}/snich"
+echo -e "  ${CYAN}Database:${NC}  postgresql://localhost:${DB_PORT}/inkflow"
 echo -e "  ${CYAN}VSIX:${NC}      $SCRIPT_DIR/$VSIX_FILE"
 echo ""
 echo -e "  ${YELLOW}Next steps:${NC}"
 echo -e "  1. Restart VS Code (or reload window: Ctrl+Shift+P → 'Reload Window')"
 echo -e "  2. When prompted, enter the database password: ${CYAN}${DB_PASSWORD}${NC}"
-echo -e "  3. Use Copilot Chat normally — Snich captures everything automatically"
-echo -e "  4. Check status: Ctrl+Shift+P → 'Snich: Show Status'"
+echo -e "  3. Use Copilot Chat normally — InkFlow captures everything automatically"
+echo -e "  4. Check status: Ctrl+Shift+P → 'InkFlow: Show Status'"
 echo ""
 echo -e "  ${YELLOW}View your captured chats:${NC}"
-echo -e "  docker exec -it snich-snich-db-1 psql -U snich -c \\"SELECT id, title, turn_count FROM sessions ORDER BY last_modified_at DESC LIMIT 10;\\""
+echo -e "  docker exec -it inkflow-inkflow-db-1 psql -U inkflow -c \\"SELECT id, title, turn_count FROM sessions ORDER BY last_modified_at DESC LIMIT 10;\\""
 echo ""

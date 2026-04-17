@@ -8,7 +8,7 @@ describe('discoverWorkspaces', () => {
     let tmpDir: string;
 
     beforeEach(() => {
-        tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'snich-test-'));
+        tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'inkflow-test-'));
     });
 
     afterEach(() => {
@@ -46,7 +46,7 @@ describe('listChatFiles', () => {
     let tmpDir: string;
 
     beforeEach(() => {
-        tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'snich-chat-'));
+        tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'inkflow-chat-'));
     });
 
     afterEach(() => {

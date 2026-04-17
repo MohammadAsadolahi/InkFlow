@@ -9,7 +9,7 @@ import { EventProcessor } from './processor/eventProcessor';
 import { LocalEventQueue } from './processor/localQueue';
 import { discoverWorkspaces, listChatFiles } from './discovery/workspaceResolver';
 import type postgres from 'postgres';
-import type { DiscoveredWorkspace, SnichConfig } from './types';
+import type { DiscoveredWorkspace, InkFlowConfig } from './types';
 import * as fs from 'fs';
 import * as path from 'path';
 
@@ -26,25 +26,25 @@ const instanceId = crypto.randomUUID();
 const workspaceIdCache = new Map<string, number>();
 
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
-    const log = vscode.window.createOutputChannel('Snich', { log: true });
+    const log = vscode.window.createOutputChannel('InkFlow', { log: true });
     context.subscriptions.push(log);
 
-    log.info(`Snich activating (instance: ${instanceId})`);
+    log.info(`InkFlow activating (instance: ${instanceId})`);
 
     // Register commands
     context.subscriptions.push(
-        vscode.commands.registerCommand('snich.showStatus', () => showStatus(log)),
-        vscode.commands.registerCommand('snich.reconnect', () => reconnect(context, log)),
-        vscode.commands.registerCommand('snich.scanNow', () => scanNow(log)),
+        vscode.commands.registerCommand('inkflow.showStatus', () => showStatus(log)),
+        vscode.commands.registerCommand('inkflow.reconnect', () => reconnect(context, log)),
+        vscode.commands.registerCommand('inkflow.scanNow', () => scanNow(log)),
     );
 
     // Lazy init — don't block activation, but give UI time to be ready
     setTimeout(async () => {
         try {
-            await initializeSnich(context, log);
+            await initializeInkFlow(context, log);
         } catch (err) {
-            log.error('Snich initialization failed', err);
-            vscode.window.showWarningMessage('Snich: Failed to connect to database. Check Output → Snich for details.');
+            log.error('InkFlow initialization failed', err);
+            vscode.window.showWarningMessage('InkFlow: Failed to connect to database. Check Output → InkFlow for details.');
         }
     }, 3000); // 3s delay so password prompt doesn't get lost
 }
@@ -78,15 +78,15 @@ export async function deactivate(): Promise<void> {
     } catch { /* best effort */ }
 }
 
-async function initializeSnich(
+async function initializeInkFlow(
     context: vscode.ExtensionContext,
     log: vscode.LogOutputChannel,
 ): Promise<void> {
-    log.info('Initializing Snich...');
+    log.info('Initializing InkFlow...');
     const config = loadConfig(vscode.workspace);
 
     if (!config.watcher.enabled) {
-        log.info('Snich watcher is disabled via settings');
+        log.info('InkFlow watcher is disabled via settings');
         return;
     }
 
@@ -95,25 +95,25 @@ async function initializeSnich(
 
     // Get password: env var URL > settings > SecretStorage > prompt
     let password: string;
-    if (process.env.SNICH_DATABASE_URL) {
-        log.info('Using SNICH_DATABASE_URL environment variable');
+    if (process.env.INKFLOW_DATABASE_URL) {
+        log.info('Using INKFLOW_DATABASE_URL environment variable');
         password = ''; // Not needed when using connection URL
     } else {
-        // Read password from settings (default: snich_dev)
-        const dbConfig = vscode.workspace.getConfiguration('snich.database');
+        // Read password from settings (default: inkflow_dev)
+        const dbConfig = vscode.workspace.getConfiguration('inkflow.database');
         const settingsPassword = dbConfig.get<string>('password', '');
         if (settingsPassword) {
             password = settingsPassword;
             log.info('Using password from settings');
         } else {
             // Fallback to SecretStorage
-            const stored = await context.secrets.get('snich.database.password');
+            const stored = await context.secrets.get('inkflow.database.password');
             if (stored) {
                 password = stored;
                 log.info('Using password from SecretStorage');
             } else {
-                log.warn('No database password configured. Set snich.database.password in settings.');
-                vscode.window.showWarningMessage('Snich: No database password. Set "snich.database.password" in settings or use "Snich: Reconnect Database".');
+                log.warn('No database password configured. Set inkflow.database.password in settings.');
+                vscode.window.showWarningMessage('InkFlow: No database password. Set "inkflow.database.password" in settings or use "InkFlow: Reconnect Database".');
                 return;
             }
         }
@@ -195,14 +195,14 @@ async function initializeSnich(
     // Handle config changes
     context.subscriptions.push(
         vscode.workspace.onDidChangeConfiguration(async (e) => {
-            if (e.affectsConfiguration('snich.database')) {
+            if (e.affectsConfiguration('inkflow.database')) {
                 const action = await vscode.window.showInformationMessage(
-                    'Snich: Database settings changed. Reconnect now?',
+                    'InkFlow: Database settings changed. Reconnect now?',
                     'Reconnect', 'Later'
                 );
                 if (action === 'Reconnect') await reconnect(context, log);
             }
-            if (e.affectsConfiguration('snich.watcher.debounceMs') && watcher) {
+            if (e.affectsConfiguration('inkflow.watcher.debounceMs') && watcher) {
                 watcher.debounceMs = loadConfig(vscode.workspace).watcher.debounceMs;
             }
         })
@@ -211,10 +211,10 @@ async function initializeSnich(
     // Dispose watcher on deactivate (sync cleanup)
     context.subscriptions.push({ dispose: () => watcher?.dispose() });
 
-    log.info('Snich fully initialized');
+    log.info('InkFlow fully initialized');
 }
 
-async function discoverAndWatch(config: SnichConfig, log: vscode.LogOutputChannel): Promise<void> {
+async function discoverAndWatch(config: InkFlowConfig, log: vscode.LogOutputChannel): Promise<void> {
     if (!sql || !watcher) return;
 
     const workspaces = discoverWorkspaces(config.watcher.watchVariants);
@@ -244,7 +244,7 @@ async function ensureWorkspaceId(ws: DiscoveredWorkspace): Promise<number> {
     return id;
 }
 
-async function handleFileChanged(filePath: string, config: SnichConfig, log: vscode.LogOutputChannel): Promise<void> {
+async function handleFileChanged(filePath: string, config: InkFlowConfig, log: vscode.LogOutputChannel): Promise<void> {
     if (isShuttingDown || !processor || !sql) return;
 
     try {
@@ -264,7 +264,7 @@ async function handleFileChanged(filePath: string, config: SnichConfig, log: vsc
     }
 }
 
-async function resolveWorkspaceIdFromPath(filePath: string, config: SnichConfig): Promise<number | null> {
+async function resolveWorkspaceIdFromPath(filePath: string, config: InkFlowConfig): Promise<number | null> {
     // Extract storage hash from path: .../workspaceStorage/<hash>/chatSessions/...
     const parts = filePath.replace(/\\/g, '/').split('/');
     const wsIdx = parts.indexOf('workspaceStorage');
@@ -289,7 +289,7 @@ async function resolveWorkspaceIdFromPath(filePath: string, config: SnichConfig)
     return id;
 }
 
-async function periodicScan(config: SnichConfig, log: vscode.LogOutputChannel): Promise<void> {
+async function periodicScan(config: InkFlowConfig, log: vscode.LogOutputChannel): Promise<void> {
     if (isShuttingDown || !processor || !sql) return;
 
     const workspaces = discoverWorkspaces(config.watcher.watchVariants);
@@ -323,11 +323,11 @@ async function reconnect(context: vscode.ExtensionContext, log: vscode.LogOutput
     workspaceIdCache.clear();
 
     try {
-        await initializeSnich(context, log);
-        vscode.window.showInformationMessage('Snich: Reconnected to database');
+        await initializeInkFlow(context, log);
+        vscode.window.showInformationMessage('InkFlow: Reconnected to database');
     } catch (err) {
         log.error('Reconnection failed', err);
-        vscode.window.showErrorMessage('Snich: Reconnection failed. Check Output panel.');
+        vscode.window.showErrorMessage('InkFlow: Reconnection failed. Check Output panel.');
     }
 }
 
@@ -336,7 +336,7 @@ function showStatus(log: vscode.LogOutputChannel): void {
     const pending = localQueue?.getPendingCount() ?? 0;
 
     const msg = [
-        `Snich Status`,
+        `InkFlow Status`,
         `Instance: ${instanceId}`,
         `DB Connected: ${sql !== null}`,
         `Watched Dirs: ${watchedDirs.length}`,
@@ -345,11 +345,11 @@ function showStatus(log: vscode.LogOutputChannel): void {
     ].join('\n');
 
     log.info(msg);
-    vscode.window.showInformationMessage(`Snich: DB=${sql !== null ? 'connected' : 'disconnected'}, Dirs=${watchedDirs.length}, Pending=${pending}`);
+    vscode.window.showInformationMessage(`InkFlow: DB=${sql !== null ? 'connected' : 'disconnected'}, Dirs=${watchedDirs.length}, Pending=${pending}`);
 }
 
 function scanNow(log: vscode.LogOutputChannel): void {
     const config = loadConfig(vscode.workspace);
     periodicScan(config, log).catch(err => log.error('Manual scan failed', err));
-    vscode.window.showInformationMessage('Snich: Scan triggered');
+    vscode.window.showInformationMessage('InkFlow: Scan triggered');
 }

@@ -1,14 +1,14 @@
 services:
-  snich-db:
+  inkflow-db:
     image: postgres:17-alpine
     environment:
-      POSTGRES_DB: snich
-      POSTGRES_USER: snich
-      POSTGRES_PASSWORD: ${SNICH_DB_PASSWORD:-snich_dev}
+      POSTGRES_DB: inkflow
+      POSTGRES_USER: inkflow
+      POSTGRES_PASSWORD: ${INKFLOW_DB_PASSWORD:-inkflow_dev}
     ports:
-      - "${SNICH_DB_PORT:-5434}:5432"
+      - "${INKFLOW_DB_PORT:-5434}:5432"
     volumes:
-      - snich_pgdata:/var/lib/postgresql/data
+      - inkflow_pgdata:/var/lib/postgresql/data
     restart: unless-stopped
     command: >
       postgres
@@ -17,10 +17,10 @@ services:
         -c tcp_keepalives_count=3
         -c statement_timeout=30000
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U snich"]
+      test: ["CMD-SHELL", "pg_isready -U inkflow"]
       interval: 5s
       timeout: 3s
       retries: 5
 
 volumes:
-  snich_pgdata:
+  inkflow_pgdata:

@@ -1,8 +1,8 @@
 import postgres from 'postgres';
-import type { SnichConfig } from '../types';
+import type { InkFlowConfig } from '../types';
 
 export interface ConnectionOptions {
-    config: SnichConfig['database'];
+    config: InkFlowConfig['database'];
     password: string;
     onNotice?: (notice: postgres.Notice) => void;
 }
@@ -14,7 +14,7 @@ export interface ConnectionOptions {
 export function createPool(opts: ConnectionOptions): postgres.Sql {
     const { config, password, onNotice } = opts;
 
-    const envUrl = process.env.SNICH_DATABASE_URL;
+    const envUrl = process.env.INKFLOW_DATABASE_URL;
 
     if (envUrl) {
         return postgres(envUrl, {

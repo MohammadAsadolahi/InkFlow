@@ -13,7 +13,7 @@
             ],
             "preLaunchTask": "npm: watch",
             "env": {
-                "SNICH_DATABASE_URL": "postgres://snich:snich_dev@localhost:5434/snich"
+                "INKFLOW_DATABASE_URL": "postgres://inkflow:inkflow_dev@localhost:5434/inkflow"
             }
         }
     ]

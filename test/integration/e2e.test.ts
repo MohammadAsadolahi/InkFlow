@@ -22,8 +22,8 @@ import { runMigrations } from '../../src/db/migrations';
 import { EventProcessor } from '../../src/processor/eventProcessor';
 import { WorkspaceRepo } from '../../src/db/repos/workspaceRepo';
 
-const TEST_DB_URL = process.env.SNICH_TEST_DATABASE_URL
-    ?? 'postgres://snich:snich_dev@localhost:5434/snich';
+const TEST_DB_URL = process.env.INKFLOW_TEST_DATABASE_URL
+    ?? 'postgres://inkflow:inkflow_dev@localhost:5434/inkflow';
 
 let sql: postgres.Sql;
 let tmpDir: string;
@@ -100,7 +100,7 @@ beforeAll(async () => {
     await runMigrations(sql, log);
 
     // Create temp dir for JSONL files
-    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'snich-e2e-'));
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'inkflow-e2e-'));
 });
 
 afterAll(async () => {

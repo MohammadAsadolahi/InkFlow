@@ -28,7 +28,7 @@ describe('LocalEventQueue', () => {
     let tmpDir: string;
 
     beforeEach(() => {
-        tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'snich-queue-'));
+        tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'inkflow-queue-'));
     });
 
     afterEach(() => {

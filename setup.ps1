@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-    Snich - One-command setup for Windows
+    InkFlow - One-command setup for Windows
 .DESCRIPTION
     1. Checks prerequisites (Docker, Node.js, VS Code CLI)
     2. Starts PostgreSQL via Docker Compose
@@ -23,7 +23,7 @@ Set-Location $ScriptDir
 
 Write-Host ""
 Write-Host "=========================================" -ForegroundColor Cyan
-Write-Host "         Snich - Setup Wizard            " -ForegroundColor Cyan
+Write-Host "         InkFlow - Setup Wizard            " -ForegroundColor Cyan
 Write-Host "=========================================" -ForegroundColor Cyan
 Write-Host ""
 
@@ -74,16 +74,16 @@ if ($CodeCmd) {
 Write-Host ""
 Write-Info "Starting PostgreSQL database..."
 
-$DbPort = if ($env:SNICH_DB_PORT) { $env:SNICH_DB_PORT } else { "5434" }
-$DbPassword = if ($env:SNICH_DB_PASSWORD) { $env:SNICH_DB_PASSWORD } else { "snich_dev" }
+$DbPort = if ($env:INKFLOW_DB_PORT) { $env:INKFLOW_DB_PORT } else { "5434" }
+$DbPassword = if ($env:INKFLOW_DB_PASSWORD) { $env:INKFLOW_DB_PASSWORD } else { "inkflow_dev" }
 
 $running = docker ps --format '{{.Names}}' 2>$null
-if ($running -match "snich-snich-db") {
-    Write-Ok "Snich database already running"
+if ($running -match "inkflow-inkflow-db") {
+    Write-Ok "InkFlow database already running"
 }
 else {
-    $env:SNICH_DB_PORT = $DbPort
-    $env:SNICH_DB_PASSWORD = $DbPassword
+    $env:INKFLOW_DB_PORT = $DbPort
+    $env:INKFLOW_DB_PASSWORD = $DbPassword
     docker compose up -d 2>&1 | Where-Object { $_ -ne "" }
 
     Write-Info "Waiting for database to be ready..."
@@ -92,9 +92,9 @@ else {
         Start-Sleep -Seconds 1
         $retries--
         if ($retries -le 0) {
-            Write-Fail "Database did not become ready in time. Check: docker logs snich-snich-db-1"
+            Write-Fail "Database did not become ready in time. Check: docker logs inkflow-inkflow-db-1"
         }
-        docker exec snich-snich-db-1 pg_isready -U snich 2>$null | Out-Null
+        docker exec inkflow-inkflow-db-1 pg_isready -U inkflow 2>$null | Out-Null
     } while ($LASTEXITCODE -ne 0)
     Write-Ok "PostgreSQL is ready on port $DbPort"
 }
@@ -112,7 +112,7 @@ Write-Ok "Build complete"
 Write-Info "Packaging VSIX..."
 $pkgJson = Get-Content package.json -Raw | ConvertFrom-Json
 $version = $pkgJson.version
-$vsixFile = "snich-$version.vsix"
+$vsixFile = "inkflow-$version.vsix"
 npx vsce package --no-dependencies --allow-missing-repository 2>&1 | Select-Object -Last 1
 
 if (-not (Test-Path $vsixFile)) {
@@ -143,16 +143,16 @@ if (Test-Path $settingsDir) {
     $settingsFile = Join-Path $settingsDir "settings.json"
     if (Test-Path $settingsFile) {
         $content = Get-Content $settingsFile -Raw
-        if ($content -match "snich\.database") {
-            Write-Ok "Snich database settings already configured"
+        if ($content -match "inkflow\.database") {
+            Write-Ok "InkFlow database settings already configured"
         }
         else {
             try {
                 $settings = $content | ConvertFrom-Json
-                $settings | Add-Member -NotePropertyName "snich.database.host" -NotePropertyValue "localhost" -Force
-                $settings | Add-Member -NotePropertyName "snich.database.port" -NotePropertyValue ([int]$DbPort) -Force
-                $settings | Add-Member -NotePropertyName "snich.database.name" -NotePropertyValue "snich" -Force
-                $settings | Add-Member -NotePropertyName "snich.database.user" -NotePropertyValue "snich" -Force
+                $settings | Add-Member -NotePropertyName "inkflow.database.host" -NotePropertyValue "localhost" -Force
+                $settings | Add-Member -NotePropertyName "inkflow.database.port" -NotePropertyValue ([int]$DbPort) -Force
+                $settings | Add-Member -NotePropertyName "inkflow.database.name" -NotePropertyValue "inkflow" -Force
+                $settings | Add-Member -NotePropertyName "inkflow.database.user" -NotePropertyValue "inkflow" -Force
                 $settings | ConvertTo-Json -Depth 100 | Set-Content $settingsFile -Encoding UTF8
                 Write-Ok "VS Code settings updated"
             }
@@ -164,10 +164,10 @@ if (Test-Path $settingsDir) {
     else {
         $newSettings = @"
 {
-    "snich.database.host": "localhost",
-    "snich.database.port": $DbPort,
-    "snich.database.name": "snich",
-    "snich.database.user": "snich"
+    "inkflow.database.host": "localhost",
+    "inkflow.database.port": $DbPort,
+    "inkflow.database.name": "inkflow",
+    "inkflow.database.user": "inkflow"
 }
 "@
         $newSettings | Set-Content $settingsFile -Encoding UTF8
@@ -181,15 +181,15 @@ Write-Host "=========================================" -ForegroundColor Green
 Write-Host "         Setup Complete!                 " -ForegroundColor Green
 Write-Host "=========================================" -ForegroundColor Green
 Write-Host ""
-Write-Host "  Database:  postgresql://localhost:${DbPort}/snich" -ForegroundColor Cyan
+Write-Host "  Database:  postgresql://localhost:${DbPort}/inkflow" -ForegroundColor Cyan
 Write-Host "  VSIX:      $ScriptDir\$vsixFile" -ForegroundColor Cyan
 Write-Host ""
 Write-Host "  Next steps:" -ForegroundColor Yellow
 Write-Host "  1. Restart VS Code (or Ctrl+Shift+P -> Reload Window)"
 Write-Host "  2. When prompted, enter the database password: $DbPassword" -ForegroundColor Cyan
-Write-Host "  3. Use Copilot Chat normally - Snich captures everything automatically"
-Write-Host "  4. Check status: Ctrl+Shift+P -> Snich: Show Status"
+Write-Host "  3. Use Copilot Chat normally - InkFlow captures everything automatically"
+Write-Host "  4. Check status: Ctrl+Shift+P -> InkFlow: Show Status"
 Write-Host ""
 Write-Host "  View your captured chats:" -ForegroundColor Yellow
-Write-Host "  docker exec -it snich-snich-db-1 psql -U snich -c ""SELECT id, title, turn_count FROM sessions ORDER BY last_modified_at DESC LIMIT 10;"""
+Write-Host "  docker exec -it inkflow-inkflow-db-1 psql -U inkflow -c ""SELECT id, title, turn_count FROM sessions ORDER BY last_modified_at DESC LIMIT 10;"""
 Write-Host ""

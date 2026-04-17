@@ -1,4 +1,4 @@
-import type { SnichConfig, VscodeVariant } from './types';
+import type { InkFlowConfig, VscodeVariant } from './types';
 
 // Minimal vscode types for config reading — avoids importing vscode in tests
 interface VscodeWorkspace {
@@ -7,20 +7,20 @@ interface VscodeWorkspace {
     };
 }
 
-export function loadConfig(workspace: VscodeWorkspace): SnichConfig {
-    const db = workspace.getConfiguration('snich.database');
-    const watcher = workspace.getConfiguration('snich.watcher');
-    const ingestion = workspace.getConfiguration('snich.ingestion');
-    const privacy = workspace.getConfiguration('snich.privacy');
-    const retention = workspace.getConfiguration('snich.retention');
-    const exp = workspace.getConfiguration('snich.export');
+export function loadConfig(workspace: VscodeWorkspace): InkFlowConfig {
+    const db = workspace.getConfiguration('inkflow.database');
+    const watcher = workspace.getConfiguration('inkflow.watcher');
+    const ingestion = workspace.getConfiguration('inkflow.ingestion');
+    const privacy = workspace.getConfiguration('inkflow.privacy');
+    const retention = workspace.getConfiguration('inkflow.retention');
+    const exp = workspace.getConfiguration('inkflow.export');
 
     return {
         database: {
             host: db.get<string>('host', 'localhost'),
             port: db.get<number>('port', 5432),
-            name: db.get<string>('name', 'snich'),
-            user: db.get<string>('user', 'snich'),
+            name: db.get<string>('name', 'inkflow'),
+            user: db.get<string>('user', 'inkflow'),
             ssl: db.get<boolean>('ssl', false),
         },
         watcher: {
@@ -49,10 +49,10 @@ export function loadConfig(workspace: VscodeWorkspace): SnichConfig {
 
 /**
  * Build a database URL from config + password.
- * If SNICH_DATABASE_URL env var is set, use that instead.
+ * If INKFLOW_DATABASE_URL env var is set, use that instead.
  */
-export function buildDatabaseUrl(config: SnichConfig['database'], password: string): string {
-    const envUrl = process.env.SNICH_DATABASE_URL;
+export function buildDatabaseUrl(config: InkFlowConfig['database'], password: string): string {
+    const envUrl = process.env.INKFLOW_DATABASE_URL;
     if (envUrl) return envUrl;
 
     const protocol = config.ssl ? 'postgres' : 'postgres';
