@@ -1,0 +1,26 @@
+services:
+  snich-db:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: snich
+      POSTGRES_USER: snich
+      POSTGRES_PASSWORD: ${SNICH_DB_PASSWORD:-snich_dev}
+    ports:
+      - "${SNICH_DB_PORT:-5434}:5432"
+    volumes:
+      - snich_pgdata:/var/lib/postgresql/data
+    restart: unless-stopped
+    command: >
+      postgres
+        -c tcp_keepalives_idle=60
+        -c tcp_keepalives_interval=10
+        -c tcp_keepalives_count=3
+        -c statement_timeout=30000
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U snich"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+volumes:
+  snich_pgdata:

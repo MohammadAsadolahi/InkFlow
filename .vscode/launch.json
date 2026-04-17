@@ -11,7 +11,10 @@
             "outFiles": [
                 "${workspaceFolder}/dist/**/*.js"
             ],
-            "preLaunchTask": "npm: watch"
+            "preLaunchTask": "npm: watch",
+            "env": {
+                "SNICH_DATABASE_URL": "postgres://snich:snich_dev@localhost:5434/snich"
+            }
         }
     ]
 }

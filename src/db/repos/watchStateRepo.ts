@@ -7,7 +7,11 @@ export class WatchStateRepo {
         const [row] = await this.sql`
             SELECT * FROM watch_state WHERE file_path = ${filePath}
         `;
-        return row ?? null;
+        if (!row) return null;
+        // BIGINT comes back as string from postgres driver — coerce to number
+        row.last_byte_offset = Number(row.last_byte_offset);
+        row.last_file_size = Number(row.last_file_size);
+        return row;
     }
 
     async upsert(
