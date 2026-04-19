@@ -22,6 +22,8 @@ interface Logger {
 interface ProcessorConfig {
     instanceId: string;
     filterInputState: boolean;
+    userId?: string;
+    displayName?: string;
 }
 
 interface ParsedPart {
@@ -65,6 +67,20 @@ export class EventProcessor {
         this.messageRepo = new MessageRepo(sql);
         this.watchStateRepo = new WatchStateRepo(sql);
         this.workspaceRepo = new WorkspaceRepo(sql);
+    }
+
+    /** Resolve or create the user_id for this extension instance. */
+    private async resolveUserId(tx: postgres.TransactionSql): Promise<number | null> {
+        if (!this.config.userId) return null;
+        const [row] = await tx`
+            INSERT INTO users (user_uid, display_name, machine_id)
+            VALUES (${this.config.userId}, ${this.config.displayName ?? null}, ${this.config.instanceId})
+            ON CONFLICT (user_uid) DO UPDATE SET
+                display_name = COALESCE(EXCLUDED.display_name, users.display_name),
+                last_seen_at = NOW()
+            RETURNING id
+        `;
+        return row.id;
     }
 
     /**
@@ -211,13 +227,15 @@ export class EventProcessor {
             if (finalState?.requests && Array.isArray(finalState.requests)) {
                 const turnRepo = new TurnRepo(tx);
                 const partRepo = new TurnPartRepo(tx);
+                const userId = await this.resolveUserId(tx);
 
-                // Update session title/customTitle from final state
-                if (finalState.customTitle || finalState.title) {
+                // Update session title/customTitle + user from final state
+                if (finalState.customTitle || finalState.title || userId) {
                     await tx`
                         UPDATE sessions SET
                             title        = COALESCE(${finalState.title ?? null}, title),
-                            custom_title = COALESCE(${finalState.customTitle ?? null}, custom_title)
+                            custom_title = COALESCE(${finalState.customTitle ?? null}, custom_title),
+                            user_id      = COALESCE(${userId}, user_id)
                         WHERE id = ${sessionId}
                     `;
                 }
@@ -226,7 +244,7 @@ export class EventProcessor {
                     await this.syncTurn(
                         tx, turnRepo, partRepo,
                         sessionId, i, finalState.requests[i],
-                        rawEventId, finalState,
+                        rawEventId, finalState, userId,
                     );
                 }
 
@@ -313,6 +331,7 @@ export class EventProcessor {
         req: any,
         rawEventId: number,
         fullState: any,
+        userId: number | null,
     ): Promise<void> {
         const userText = req?.message?.text || req?.message?.content || '';
         const modelId = req?.modelId || fullState?.modelId || null;
@@ -334,6 +353,7 @@ export class EventProcessor {
             mode,
             userText,
             userRaw: req?.message ?? null,
+            userId,
         });
 
         // Parse every response part
@@ -371,11 +391,34 @@ export class EventProcessor {
                 content = typeof uri === 'string' ? uri : null;
             } else if (kind === 'inlineReference') {
                 // Code / symbol reference
-                const name = part?.inlineReference?.name || part?.inlineReference?.uri?.fsPath;
+                const name = part?.inlineReference?.name
+                    || part?.inlineReference?.uri?.fsPath
+                    || part?.inlineReference?.uri?.path;
                 content = typeof name === 'string' ? name : null;
             } else if (kind === 'codeblockUri') {
                 const uri = part?.uri?.fsPath || part?.uri?.path;
                 content = typeof uri === 'string' ? uri : null;
+            } else if (kind === 'progressMessage') {
+                content = typeof part?.value === 'string' ? part.value
+                    : typeof part?.content?.value === 'string' ? part.content.value : null;
+            } else if (kind === 'progressTaskSerialized') {
+                content = typeof part?.value === 'string' ? part.value
+                    : typeof part?.content?.value === 'string' ? part.content.value : null;
+            } else if (kind === 'elicitationSerialized') {
+                content = typeof part?.message?.value === 'string' ? part.message.value : null;
+            } else if (kind === 'confirmation') {
+                content = typeof part?.title === 'string' ? part.title
+                    : typeof part?.message === 'string' ? part.message : null;
+            } else if (kind === 'warning') {
+                content = typeof part?.content?.value === 'string' ? part.content.value : null;
+            } else if (kind === 'command') {
+                content = typeof part?.command?.title === 'string' ? part.command.title
+                    : typeof part?.command?.id === 'string' ? part.command.id : null;
+            } else if (kind === 'questionCarousel') {
+                const questions = part?.questions;
+                if (Array.isArray(questions)) {
+                    content = questions.map((q: any) => q?.title || q?.message?.value || '').filter(Boolean).join(' | ');
+                }
             }
 
             return { partIndex: idx, kind, content, rawJson: part };

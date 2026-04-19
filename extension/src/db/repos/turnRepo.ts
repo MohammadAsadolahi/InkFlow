@@ -14,6 +14,7 @@ export interface TurnUpsertInput {
     userRaw?: unknown;
     isFork?: boolean;
     forkSourceId?: number | null;
+    userId?: number | null;
 }
 
 export class TurnRepo {
@@ -28,7 +29,7 @@ export class TurnRepo {
             INSERT INTO turns (
                 session_id, turn_index, request_id, response_id,
                 timestamp_ms, completed_at_ms, model_id, agent_id,
-                mode, user_text, user_raw, is_fork, fork_source_id
+                mode, user_text, user_raw, is_fork, fork_source_id, user_id
             ) VALUES (
                 ${input.sessionId},
                 ${input.turnIndex},
@@ -42,7 +43,8 @@ export class TurnRepo {
                 ${input.userText},
                 ${input.userRaw ? JSON.stringify(input.userRaw) : null},
                 ${input.isFork ?? false},
-                ${input.forkSourceId ?? null}
+                ${input.forkSourceId ?? null},
+                ${input.userId ?? null}
             )
             ON CONFLICT (session_id, turn_index) DO UPDATE SET
                 request_id      = EXCLUDED.request_id,
@@ -56,6 +58,7 @@ export class TurnRepo {
                 user_raw        = EXCLUDED.user_raw,
                 is_fork         = EXCLUDED.is_fork,
                 fork_source_id  = EXCLUDED.fork_source_id,
+                user_id         = COALESCE(EXCLUDED.user_id, turns.user_id),
                 deleted_at      = NULL
             RETURNING id
         `;

@@ -64,6 +64,18 @@
                     "scope": "application",
                     "description": "Use SSL for PostgreSQL connection"
                 },
+                "inkflow.identity.userId": {
+                    "type": "string",
+                    "default": "",
+                    "scope": "application",
+                    "description": "Unique user identifier sent with every session. Used to distinguish users in a shared InkFlow instance."
+                },
+                "inkflow.identity.displayName": {
+                    "type": "string",
+                    "default": "",
+                    "scope": "application",
+                    "description": "Human-readable display name for this user."
+                },
                 "inkflow.watcher.enabled": {
                     "type": "boolean",
                     "default": true,

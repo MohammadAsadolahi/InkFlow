@@ -169,6 +169,8 @@ async function initializeInkFlow(
     processor = new EventProcessor(sql, {
         instanceId,
         filterInputState: config.ingestion.filterInputState,
+        userId: config.identity.userId || undefined,
+        displayName: config.identity.displayName || undefined,
     }, log);
 
     // Initialize watcher

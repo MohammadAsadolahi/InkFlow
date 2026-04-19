@@ -16,11 +16,27 @@ services:
         -c tcp_keepalives_interval=10
         -c tcp_keepalives_count=3
         -c statement_timeout=30000
+        -c listen_addresses='*'
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U inkflow"]
       interval: 5s
       timeout: 3s
       retries: 5
+
+  inkflow-api:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    environment:
+      DATABASE_URL: postgres://inkflow:${INKFLOW_DB_PASSWORD:-inkflow_dev}@inkflow-db:5432/inkflow
+      PORT: 3700
+      NODE_ENV: production
+    ports:
+      - "${INKFLOW_API_PORT:-3700}:3700"
+    depends_on:
+      inkflow-db:
+        condition: service_healthy
+    restart: unless-stopped
 
 volumes:
   inkflow_pgdata:

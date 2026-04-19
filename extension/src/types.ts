@@ -138,6 +138,10 @@ export interface InkFlowConfig {
         user: string;
         ssl: boolean;
     };
+    identity: {
+        userId: string;
+        displayName: string;
+    };
     watcher: {
         enabled: boolean;
         debounceMs: number;

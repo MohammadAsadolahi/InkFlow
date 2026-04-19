@@ -9,6 +9,7 @@ interface VscodeWorkspace {
 
 export function loadConfig(workspace: VscodeWorkspace): InkFlowConfig {
     const db = workspace.getConfiguration('inkflow.database');
+    const identity = workspace.getConfiguration('inkflow.identity');
     const watcher = workspace.getConfiguration('inkflow.watcher');
     const ingestion = workspace.getConfiguration('inkflow.ingestion');
     const privacy = workspace.getConfiguration('inkflow.privacy');
@@ -22,6 +23,10 @@ export function loadConfig(workspace: VscodeWorkspace): InkFlowConfig {
             name: db.get<string>('name', 'inkflow'),
             user: db.get<string>('user', 'inkflow'),
             ssl: db.get<boolean>('ssl', false),
+        },
+        identity: {
+            userId: identity.get<string>('userId', ''),
+            displayName: identity.get<string>('displayName', ''),
         },
         watcher: {
             enabled: watcher.get<boolean>('enabled', true),

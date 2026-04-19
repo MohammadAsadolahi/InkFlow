@@ -1,0 +1,124 @@
+@import "tailwindcss";
+
+/* Custom design tokens */
+:root {
+    --ink-primary: #6366f1;
+    --ink-primary-light: #818cf8;
+    --ink-accent: #06b6d4;
+    --ink-surface: #111827;
+    --ink-surface-elevated: #1f2937;
+    --ink-border: #374151;
+    --ink-text: #f9fafb;
+    --ink-text-muted: #9ca3af;
+    --ink-thinking: #a78bfa;
+    --ink-tool: #f59e0b;
+    --ink-edit: #10b981;
+    --ink-user: #3b82f6;
+    --ink-assistant: #8b5cf6;
+}
+
+/* Scrollbar styling */
+::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+}
+
+::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+    background: #4b5563;
+    border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+    background: #6b7280;
+}
+
+/* Smooth transitions */
+* {
+    transition-property: color, background-color, border-color, opacity;
+    transition-duration: 150ms;
+    transition-timing-function: ease;
+}
+
+/* Code blocks */
+pre,
+code {
+    font-family: 'JetBrains Mono', 'Fira Code', 'Cascadia Code', monospace;
+}
+
+/* Animated gradient for loading */
+@keyframes shimmer {
+    0% {
+        background-position: -200% 0;
+    }
+
+    100% {
+        background-position: 200% 0;
+    }
+}
+
+.shimmer {
+    background: linear-gradient(90deg, #1f2937 25%, #374151 50%, #1f2937 75%);
+    background-size: 200% 100%;
+    animation: shimmer 1.5s infinite;
+}
+
+/* Part kind colors */
+.kind-text {
+    border-left-color: #8b5cf6;
+}
+
+.kind-thinking {
+    border-left-color: #a78bfa;
+}
+
+.kind-toolInvocationSerialized {
+    border-left-color: #f59e0b;
+}
+
+.kind-textEditGroup {
+    border-left-color: #10b981;
+}
+
+.kind-inlineReference {
+    border-left-color: #06b6d4;
+}
+
+.kind-codeblockUri {
+    border-left-color: #3b82f6;
+}
+
+.kind-undoStop {
+    border-left-color: #6b7280;
+}
+
+.kind-mcpServersStarting {
+    border-left-color: #9ca3af;
+}
+
+.kind-progressMessage {
+    border-left-color: #64748b;
+}
+
+.kind-elicitationSerialized {
+    border-left-color: #ec4899;
+}
+
+.kind-confirmation {
+    border-left-color: #22c55e;
+}
+
+.kind-warning {
+    border-left-color: #ef4444;
+}
+
+.kind-command {
+    border-left-color: #8b5cf6;
+}
+
+.kind-questionCarousel {
+    border-left-color: #f97316;
+}

@@ -209,6 +209,33 @@ ALTER TABLE turn_parts SET (
 );
 `;
 
+/**
+ * Migration 003 — Multi-user & multi-machine support.
+ *
+ * Adds a `users` table and links sessions/turns to a user_id so multiple
+ * developers can send data to a single shared InkFlow instance.
+ */
+const MIGRATION_003_SQL = `
+CREATE TABLE users (
+    id              SERIAL PRIMARY KEY,
+    user_uid        VARCHAR(200) UNIQUE NOT NULL,
+    display_name    VARCHAR(255),
+    machine_id      VARCHAR(200),
+    first_seen_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    last_seen_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX idx_users_uid ON users(user_uid);
+
+ALTER TABLE sessions ADD COLUMN user_id INTEGER REFERENCES users(id);
+ALTER TABLE turns    ADD COLUMN user_id INTEGER REFERENCES users(id);
+
+CREATE INDEX idx_sessions_user ON sessions(user_id) WHERE deleted_at IS NULL;
+CREATE INDEX idx_turns_user    ON turns(user_id)    WHERE deleted_at IS NULL;
+
+ALTER TABLE extension_instances ADD COLUMN user_id INTEGER REFERENCES users(id);
+`;
+
 export const MIGRATIONS: Migration[] = [
     {
         version: 1,
@@ -221,6 +248,12 @@ export const MIGRATIONS: Migration[] = [
         name: 'full_fidelity_turns',
         sql: MIGRATION_002_SQL,
         checksum: computeChecksum(MIGRATION_002_SQL),
+    },
+    {
+        version: 3,
+        name: 'multi_user_support',
+        sql: MIGRATION_003_SQL,
+        checksum: computeChecksum(MIGRATION_003_SQL),
     },
 ];
 
