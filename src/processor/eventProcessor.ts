@@ -2,6 +2,7 @@ import postgres from 'postgres';
 import { readNewLines, readHeaderHash } from '../watcher/fileReader';
 import { detectFork } from '../parser/forkDetector';
 import { computeContentHash } from '../utils/hash';
+import { JsonlReplayer } from '../parser/jsonlReplayer';
 import { RawEventRepo } from '../db/repos/rawEventRepo';
 import { SessionRepo } from '../db/repos/sessionRepo';
 import { MessageRepo } from '../db/repos/messageRepo';
@@ -182,6 +183,28 @@ export class EventProcessor {
             // Process each event
             for (const event of newEvents) {
                 await this.applyEvent(tx, sessionId, sessionUuid, event);
+            }
+
+            // Replay the full file state to sync assistant messages.
+            // Response content arrives as kind=2 patches on requests[N].response
+            // which applyEvent intentionally skips during streaming. After all
+            // new events are processed, replay everything to get the final state
+            // and upsert any assistant messages that now have content.
+            const replayer = new JsonlReplayer();
+            for (const event of events) {
+                const entry = (typeof event.raw_content === 'string'
+                    ? JSON.parse(event.raw_content)
+                    : event.raw_content) as JsonlEntry;
+                replayer.apply(entry);
+            }
+            const finalState = replayer.getState();
+            if (finalState?.requests && Array.isArray(finalState.requests)) {
+                for (let i = 0; i < finalState.requests.length; i++) {
+                    await this.syncAssistantMessage(
+                        tx, sessionId, i, finalState.requests[i],
+                        newEvents[newEvents.length - 1].id,
+                    );
+                }
             }
 
             // Advance cursor
@@ -434,21 +457,60 @@ export class EventProcessor {
         if (!response) return '';
         if (typeof response === 'string') return response;
 
-        // VS Code chat response format: { parts: [{ kind: 'markdownContent', content: { value: '...' } }] }
-        if (response.parts && Array.isArray(response.parts)) {
-            return response.parts
-                .map((part: any) => {
-                    if (part?.content?.value) return part.content.value;
-                    if (typeof part === 'string') return part;
-                    return '';
-                })
+        // VS Code chat response format: the response field is an array of parts.
+        // Text parts have kind=undefined with a `value` string.
+        // Thinking parts have kind='thinking' with a `value` string.
+        if (Array.isArray(response)) {
+            return response
+                .filter((part: any) => part && (part.kind === undefined || part.kind === 'thinking') && typeof part.value === 'string')
+                .map((part: any) => part.value)
                 .filter(Boolean)
-                .join('\n');
+                .join('');
         }
 
+        // Fallback for older/alternate formats
         if (response.value) return response.value;
         if (response.result) return typeof response.result === 'string' ? response.result : '';
         return '';
+    }
+
+    private async syncAssistantMessage(
+        tx: postgres.TransactionSql,
+        sessionId: number,
+        requestIndex: number,
+        request: any,
+        rawEventId: number,
+    ): Promise<void> {
+        const assistantContent = this.extractResponseContent(request?.response);
+        if (!assistantContent) return;
+
+        const assistantHash = computeContentHash(assistantContent);
+        const [existing] = await tx`
+            SELECT id, content_hash FROM messages
+            WHERE session_id = ${sessionId}
+              AND request_index = ${requestIndex}
+              AND role = 'assistant'
+              AND deleted_at IS NULL
+        `;
+
+        if (!existing) {
+            const assistantId = await this.createMessage(
+                tx, sessionId, requestIndex, 'assistant', assistantContent, assistantHash,
+            );
+            await this.addVersion(tx, assistantId, 1, assistantContent, assistantHash, 'created', rawEventId);
+        } else if (!Buffer.from(existing.content_hash).equals(assistantHash)) {
+            // Content changed — update the message and record a new version
+            const [lastVersion] = await tx`
+                SELECT MAX(version) AS v FROM message_versions WHERE message_id = ${existing.id}
+            `;
+            const nextVersion = (lastVersion?.v ?? 1) + 1;
+            await tx`
+                UPDATE messages
+                SET content = ${assistantContent}, content_hash = ${assistantHash}, finalized_at = NOW()
+                WHERE id = ${existing.id}
+            `;
+            await this.addVersion(tx, existing.id, nextVersion, assistantContent, assistantHash, 'updated', rawEventId);
+        }
     }
 
     shutdown(): void {
