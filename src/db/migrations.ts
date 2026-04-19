@@ -149,12 +149,78 @@ ALTER TABLE messages SET (
 );
 `;
 
+/**
+ * Migration 002 — Full-fidelity turn capture.
+ *
+ * Adds `turns` and `turn_parts` tables so every response part (thinking,
+ * tool calls, text, file edits, etc.) is stored verbatim as JSONB.
+ * This allows complete reconstruction of the agent's conversation history.
+ * The existing `messages` table is kept for backward compatibility as a
+ * simplified summary view.
+ */
+const MIGRATION_002_SQL = `
+-- TURNS — one row per user/AI request-response cycle
+CREATE TABLE turns (
+    id              BIGSERIAL PRIMARY KEY,
+    session_id      INTEGER NOT NULL REFERENCES sessions(id),
+    turn_index      INTEGER NOT NULL,
+    request_id      VARCHAR(200),
+    response_id     VARCHAR(200),
+    timestamp_ms    BIGINT,
+    completed_at_ms BIGINT,
+    model_id        VARCHAR(200),
+    agent_id        VARCHAR(200),
+    mode            VARCHAR(50),
+    user_text       TEXT NOT NULL DEFAULT '',
+    user_raw        JSONB,
+    is_fork         BOOLEAN NOT NULL DEFAULT FALSE,
+    fork_source_id  BIGINT REFERENCES turns(id),
+    deleted_at      TIMESTAMPTZ,
+    UNIQUE(session_id, turn_index)
+);
+
+CREATE INDEX idx_turns_session ON turns(session_id, turn_index) WHERE deleted_at IS NULL;
+
+-- TURN_PARTS — every atomic piece of an AI response, in order
+--   kind = NULL or '__text__' → plain AI text (value field)
+--   kind = 'thinking'         → agent reasoning
+--   kind = 'toolInvocationSerialized' → tool / sub-agent call
+--   kind = 'textEditGroup'    → file edits applied
+--   kind = 'inlineReference'  → code/symbol references
+--   kind = 'codeblockUri'     → codeblock file link
+--   kind = 'undoStop'         → undo checkpoint
+--   kind = 'mcpServersStarting' → MCP lifecycle
+CREATE TABLE turn_parts (
+    id              BIGSERIAL PRIMARY KEY,
+    turn_id         BIGINT NOT NULL REFERENCES turns(id),
+    part_index      INTEGER NOT NULL,
+    kind            VARCHAR(100),
+    content         TEXT,
+    raw_json        JSONB NOT NULL,
+    UNIQUE(turn_id, part_index)
+);
+
+CREATE INDEX idx_turn_parts_turn ON turn_parts(turn_id, part_index);
+CREATE INDEX idx_turn_parts_kind ON turn_parts(kind) WHERE kind IS NOT NULL;
+
+ALTER TABLE turn_parts SET (
+    autovacuum_vacuum_scale_factor = 0.05,
+    autovacuum_analyze_scale_factor = 0.05
+);
+`;
+
 export const MIGRATIONS: Migration[] = [
     {
         version: 1,
         name: 'initial_schema',
         sql: MIGRATION_001_SQL,
         checksum: computeChecksum(MIGRATION_001_SQL),
+    },
+    {
+        version: 2,
+        name: 'full_fidelity_turns',
+        sql: MIGRATION_002_SQL,
+        checksum: computeChecksum(MIGRATION_002_SQL),
     },
 ];
 

@@ -8,6 +8,8 @@ import { SessionRepo } from '../db/repos/sessionRepo';
 import { MessageRepo } from '../db/repos/messageRepo';
 import { WatchStateRepo } from '../db/repos/watchStateRepo';
 import { WorkspaceRepo } from '../db/repos/workspaceRepo';
+import { TurnRepo } from '../db/repos/turnRepo';
+import { TurnPartRepo } from '../db/repos/turnPartRepo';
 import type { JsonlEntry, RawEventInput, MessageRole } from '../types';
 
 interface Logger {
@@ -22,9 +24,28 @@ interface ProcessorConfig {
     filterInputState: boolean;
 }
 
+interface ParsedPart {
+    partIndex: number;
+    kind: string | null;
+    content: string | null;
+    rawJson: unknown;
+}
+
 /**
  * Main event processing pipeline.
- * File change → read new bytes → parse → store raw events → materialize sessions/messages
+ *
+ * File change → read new bytes → parse → store raw events →
+ *   replay JSONL → materialize sessions / turns / turn_parts / messages
+ *
+ * The `turns` + `turn_parts` tables capture every piece of the conversation:
+ *   - user text
+ *   - agent thinking / reasoning
+ *   - tool invocations (file reads, terminal commands, sub-agent calls …)
+ *   - file edits applied
+ *   - inline references, codeblock URIs, undo stops, MCP lifecycle
+ *   - final AI text
+ *
+ * The `messages` table is kept as a simplified backward-compatible summary.
  */
 export class EventProcessor {
     private rawEventRepo: RawEventRepo;
@@ -32,7 +53,6 @@ export class EventProcessor {
     private messageRepo: MessageRepo;
     private watchStateRepo: WatchStateRepo;
     private workspaceRepo: WorkspaceRepo;
-    private streamingTimers = new Map<string, ReturnType<typeof setTimeout>>();
     private isShuttingDown = false;
 
     constructor(
@@ -130,23 +150,20 @@ export class EventProcessor {
         return ingested;
     }
 
-    /**
-     * Cursor-driven materialization: process all unmaterialized events for sessions in this file.
-     */
+    // ─────────────────────────────────────────────────────────────
+    // Cursor-driven materialization
+    // ─────────────────────────────────────────────────────────────
+
     async materializeFromFile(sessionFile: string, workspaceId: number): Promise<void> {
-        // Find all sessions sourced from this file
-        // For a given JSONL file, we need to extract the session UUID from the kind=0 event
         await this.sql.begin(async (tx) => {
-            // Get unmaterialized events
             const events = await tx`
                 SELECT * FROM raw_events
                 WHERE session_file = ${sessionFile}
                 ORDER BY id ASC
             `;
-
             if (events.length === 0) return;
 
-            // Find session UUID from kind=0 event
+            // ── Resolve session UUID from first kind=0 event ──
             let sessionUuid: string | null = null;
             for (const event of events) {
                 if (event.kind === 0) {
@@ -157,39 +174,29 @@ export class EventProcessor {
                     break;
                 }
             }
-
             if (!sessionUuid) {
-                // Use filename as fallback UUID
                 const filename = sessionFile.split(/[\\/]/).pop()?.replace('.jsonl', '') || sessionFile;
                 sessionUuid = filename;
             }
 
-            // Lock session for materialization
             await tx`SELECT pg_advisory_xact_lock(hashtext(${sessionUuid}))`;
-
-            // Upsert session
             const sessionId = await this.upsertSession(tx, sessionUuid, workspaceId, sessionFile);
 
-            // Get cursor
-            const [session] = await tx`
-                SELECT last_event_id, turn_count FROM sessions WHERE id = ${sessionId}
+            const [sessionRow] = await tx`
+                SELECT last_event_id FROM sessions WHERE id = ${sessionId}
             `;
-            const lastEventId = session?.last_event_id ?? 0;
-
-            // Get unmaterialized events
+            const lastEventId = sessionRow?.last_event_id ?? 0;
             const newEvents = events.filter(e => e.id > lastEventId);
             if (newEvents.length === 0) return;
 
-            // Process each event
+            // ── Apply structural patches (title, fork detection) ──
             for (const event of newEvents) {
-                await this.applyEvent(tx, sessionId, sessionUuid, event);
+                await this.applyStructuralEvent(tx, sessionId, event);
             }
 
-            // Replay the full file state to sync assistant messages.
-            // Response content arrives as kind=2 patches on requests[N].response
-            // which applyEvent intentionally skips during streaming. After all
-            // new events are processed, replay everything to get the final state
-            // and upsert any assistant messages that now have content.
+            // ── Replay ALL events to get authoritative final state ──
+            // We can't rely on incremental state here because turn_parts must
+            // be consistent with the full replayed JSONL at all times.
             const replayer = new JsonlReplayer();
             for (const event of events) {
                 const entry = (typeof event.raw_content === 'string'
@@ -198,23 +205,252 @@ export class EventProcessor {
                 replayer.apply(entry);
             }
             const finalState = replayer.getState();
+            const rawEventId = newEvents[newEvents.length - 1].id;
+
+            // ── Materialise turns + turn_parts + messages ──
             if (finalState?.requests && Array.isArray(finalState.requests)) {
+                const turnRepo = new TurnRepo(tx);
+                const partRepo = new TurnPartRepo(tx);
+
+                // Update session title/customTitle from final state
+                if (finalState.customTitle || finalState.title) {
+                    await tx`
+                        UPDATE sessions SET
+                            title        = COALESCE(${finalState.title ?? null}, title),
+                            custom_title = COALESCE(${finalState.customTitle ?? null}, custom_title)
+                        WHERE id = ${sessionId}
+                    `;
+                }
+
                 for (let i = 0; i < finalState.requests.length; i++) {
-                    await this.syncAssistantMessage(
-                        tx, sessionId, i, finalState.requests[i],
-                        newEvents[newEvents.length - 1].id,
+                    await this.syncTurn(
+                        tx, turnRepo, partRepo,
+                        sessionId, i, finalState.requests[i],
+                        rawEventId, finalState,
                     );
                 }
+
+                await tx`
+                    UPDATE sessions
+                    SET turn_count = ${finalState.requests.length}, last_modified_at = NOW()
+                    WHERE id = ${sessionId}
+                `;
             }
 
-            // Advance cursor
-            const maxEventId = newEvents[newEvents.length - 1].id;
+            // ── Advance cursor ──
             await tx`
-                UPDATE sessions SET last_event_id = ${maxEventId}, last_modified_at = NOW()
+                UPDATE sessions SET last_event_id = ${rawEventId}, last_modified_at = NOW()
                 WHERE id = ${sessionId}
             `;
         });
     }
+
+    // ─────────────────────────────────────────────────────────────
+    // Structural event: title updates + fork detection
+    // ─────────────────────────────────────────────────────────────
+
+    private async applyStructuralEvent(
+        tx: postgres.TransactionSql,
+        sessionId: number,
+        event: postgres.Row,
+    ): Promise<void> {
+        const rawContent = typeof event.raw_content === 'string'
+            ? JSON.parse(event.raw_content)
+            : event.raw_content;
+        const entry: JsonlEntry = rawContent;
+
+        if (entry.kind === 1) {
+            const k = entry.k;
+            if (k.length === 1 && k[0] === 'title') {
+                await tx`UPDATE sessions SET title = ${String(entry.v)}, last_modified_at = NOW() WHERE id = ${sessionId}`;
+            } else if (k.length === 1 && k[0] === 'customTitle') {
+                await tx`UPDATE sessions SET custom_title = ${String(entry.v)}, last_modified_at = NOW() WHERE id = ${sessionId}`;
+            }
+            return;
+        }
+
+        if (entry.kind === 2) {
+            const [sessionRow] = await tx`SELECT turn_count FROM sessions WHERE id = ${sessionId}`;
+            const currentTurnCount = sessionRow?.turn_count ?? 0;
+            const fork = detectFork(entry, currentTurnCount);
+            if (fork) {
+                // Soft-delete everything from forkAt onwards; turns will be
+                // rebuilt from final replayed state below.
+                await tx`
+                    UPDATE messages
+                    SET deleted_at = NOW(), deletion_reason = 'forked'
+                    WHERE session_id = ${sessionId}
+                      AND request_index >= ${fork.forkAt}
+                      AND deleted_at IS NULL
+                `;
+                await tx`
+                    UPDATE turns
+                    SET deleted_at = NOW()
+                    WHERE session_id = ${sessionId}
+                      AND turn_index >= ${fork.forkAt}
+                      AND deleted_at IS NULL
+                `;
+                await tx`
+                    UPDATE sessions SET
+                        fork_count = fork_count + 1,
+                        version    = version + 1
+                    WHERE id = ${sessionId}
+                `;
+            }
+        }
+    }
+
+    // ─────────────────────────────────────────────────────────────
+    // Sync one turn (upsert turn + replace all parts + sync messages)
+    // ─────────────────────────────────────────────────────────────
+
+    private async syncTurn(
+        tx: postgres.TransactionSql,
+        turnRepo: TurnRepo,
+        partRepo: TurnPartRepo,
+        sessionId: number,
+        turnIndex: number,
+        req: any,
+        rawEventId: number,
+        fullState: any,
+    ): Promise<void> {
+        const userText = req?.message?.text || req?.message?.content || '';
+        const modelId = req?.modelId || fullState?.modelId || null;
+        const agentId = req?.agent?.id || null;
+        const mode = req?.agent?.modes?.[0] || null;
+        const tsMs = typeof req?.timestamp === 'number' ? req.timestamp : null;
+        const doneMs = typeof req?.modelState?.completedAt === 'number'
+            ? req.modelState.completedAt : null;
+
+        const turnId = await turnRepo.upsert({
+            sessionId,
+            turnIndex,
+            requestId: req?.requestId ?? null,
+            responseId: req?.responseId ?? null,
+            timestampMs: tsMs,
+            completedAtMs: doneMs,
+            modelId,
+            agentId,
+            mode,
+            userText,
+            userRaw: req?.message ?? null,
+        });
+
+        // Parse every response part
+        const parts = this.parseResponseParts(req?.response);
+        await partRepo.replaceAll(turnId, parts);
+
+        // Keep messages table in sync (backward-compat summary)
+        await this.syncMessagesForTurn(tx, sessionId, turnIndex, userText, parts, rawEventId);
+    }
+
+    // ─────────────────────────────────────────────────────────────
+    // Parse the response array into typed parts
+    // ─────────────────────────────────────────────────────────────
+
+    private parseResponseParts(response: any): ParsedPart[] {
+        if (!response || !Array.isArray(response)) return [];
+
+        return response.map((part: any, idx: number): ParsedPart => {
+            const kind: string | null = part?.kind ?? null;
+            let content: string | null = null;
+
+            if (kind === null && typeof part?.value === 'string') {
+                // Plain text chunk
+                content = part.value;
+            } else if (kind === 'thinking' && typeof part?.value === 'string') {
+                // Agent reasoning
+                content = part.value;
+            } else if (kind === 'toolInvocationSerialized') {
+                // Tool / sub-agent call — capture invocation message
+                const msg = part?.invocationMessage?.value || part?.pastTenseMessage?.value;
+                content = typeof msg === 'string' ? msg : null;
+            } else if (kind === 'textEditGroup') {
+                // File edit — capture the file path
+                const uri = part?.uri?.fsPath || part?.uri?.path;
+                content = typeof uri === 'string' ? uri : null;
+            } else if (kind === 'inlineReference') {
+                // Code / symbol reference
+                const name = part?.inlineReference?.name || part?.inlineReference?.uri?.fsPath;
+                content = typeof name === 'string' ? name : null;
+            } else if (kind === 'codeblockUri') {
+                const uri = part?.uri?.fsPath || part?.uri?.path;
+                content = typeof uri === 'string' ? uri : null;
+            }
+
+            return { partIndex: idx, kind, content, rawJson: part };
+        });
+    }
+
+    // ─────────────────────────────────────────────────────────────
+    // Keep the `messages` table (backward-compat) in sync
+    // ─────────────────────────────────────────────────────────────
+
+    private async syncMessagesForTurn(
+        tx: postgres.TransactionSql,
+        sessionId: number,
+        requestIndex: number,
+        userText: string,
+        parts: ParsedPart[],
+        rawEventId: number,
+    ): Promise<void> {
+        // ── User message ──
+        const userHash = computeContentHash(userText);
+        const [existingUser] = await tx`
+            SELECT id FROM messages
+            WHERE session_id = ${sessionId}
+              AND request_index = ${requestIndex}
+              AND role = 'user'
+              AND deleted_at IS NULL
+        `;
+        if (!existingUser) {
+            const uid = await this.createMessage(tx, sessionId, requestIndex, 'user', userText, userHash);
+            await this.addVersion(tx, uid, 1, userText, userHash, 'created', rawEventId);
+        }
+
+        // ── Assistant summary (all text + thinking) ──
+        const assistantText = parts
+            .filter(p => p.kind === null || p.kind === 'thinking')
+            .map(p => p.content ?? '')
+            .filter(Boolean)
+            .join('');
+
+        if (!assistantText) return;
+
+        const assistantHash = computeContentHash(assistantText);
+        const [existingAssistant] = await tx`
+            SELECT id, content_hash FROM messages
+            WHERE session_id = ${sessionId}
+              AND request_index = ${requestIndex}
+              AND role = 'assistant'
+              AND deleted_at IS NULL
+        `;
+
+        if (!existingAssistant) {
+            const aid = await this.createMessage(
+                tx, sessionId, requestIndex, 'assistant', assistantText, assistantHash,
+            );
+            await this.addVersion(tx, aid, 1, assistantText, assistantHash, 'created', rawEventId);
+        } else if (!Buffer.from(existingAssistant.content_hash).equals(assistantHash)) {
+            const [lastVer] = await tx`
+                SELECT MAX(version) AS v FROM message_versions WHERE message_id = ${existingAssistant.id}
+            `;
+            const nextVersion = (lastVer?.v ?? 1) + 1;
+            await tx`
+                UPDATE messages
+                SET content = ${assistantText}, content_hash = ${assistantHash}, finalized_at = NOW()
+                WHERE id = ${existingAssistant.id}
+            `;
+            await this.addVersion(
+                tx, existingAssistant.id, nextVersion,
+                assistantText, assistantHash, 'finalized', rawEventId,
+            );
+        }
+    }
+
+    // ─────────────────────────────────────────────────────────────
+    // Helpers
+    // ─────────────────────────────────────────────────────────────
 
     private async upsertSession(
         tx: postgres.TransactionSql,
@@ -231,130 +467,6 @@ export class EventProcessor {
             RETURNING id
         `;
         return row.id;
-    }
-
-    private async applyEvent(
-        tx: postgres.TransactionSql,
-        sessionId: number,
-        sessionUuid: string,
-        event: postgres.Row,
-    ): Promise<void> {
-        const rawContent = typeof event.raw_content === 'string'
-            ? JSON.parse(event.raw_content)
-            : event.raw_content;
-        const entry: JsonlEntry = rawContent;
-
-        if (entry.kind === 0) {
-            // Initial state — extract session metadata + messages
-            await this.handleInitialState(tx, sessionId, entry.v as any, event.id);
-            return;
-        }
-
-        if (entry.kind === 1) {
-            // Set — handle title/customTitle updates
-            const k = entry.k;
-            if (k.length === 1 && k[0] === 'title') {
-                await tx`UPDATE sessions SET title = ${String(entry.v)}, last_modified_at = NOW() WHERE id = ${sessionId}`;
-            } else if (k.length === 1 && k[0] === 'customTitle') {
-                await tx`UPDATE sessions SET custom_title = ${String(entry.v)}, last_modified_at = NOW() WHERE id = ${sessionId}`;
-            }
-            return;
-        }
-
-        if (entry.kind === 2) {
-            // Check for fork
-            const [sessionRow] = await tx`SELECT turn_count FROM sessions WHERE id = ${sessionId}`;
-            const currentTurnCount = sessionRow?.turn_count ?? 0;
-
-            const fork = detectFork(entry, currentTurnCount);
-            if (fork) {
-                await this.handleFork(tx, sessionId, fork.forkAt, fork.newItems, event.id);
-                return;
-            }
-
-            // Check if this is a top-level requests push (new turn)
-            if (entry.k.length === 1 && entry.k[0] === 'requests' && entry.v && entry.v.length > 0) {
-                await this.handleNewTurns(tx, sessionId, entry.v, currentTurnCount, event.id);
-                return;
-            }
-
-            // Response streaming update or other sub-path update — log as version
-            // (Don't update messages.content during streaming)
-            return;
-        }
-
-        // kind=3 — delete property — rare, just log
-    }
-
-    private async handleInitialState(
-        tx: postgres.TransactionSql,
-        sessionId: number,
-        state: any,
-        rawEventId: number,
-    ): Promise<void> {
-        if (!state || typeof state !== 'object') return;
-
-        // Update session metadata
-        if (state.title || state.customTitle) {
-            await tx`
-                UPDATE sessions SET
-                    title = COALESCE(${state.title ?? null}, title),
-                    custom_title = COALESCE(${state.customTitle ?? null}, custom_title),
-                    last_modified_at = NOW()
-                WHERE id = ${sessionId}
-            `;
-        }
-
-        // Process requests array
-        const requests = state.requests;
-        if (!Array.isArray(requests)) return;
-
-        for (let i = 0; i < requests.length; i++) {
-            const req = requests[i];
-            await this.upsertMessage(tx, sessionId, i, req, rawEventId);
-        }
-
-        await tx`
-            UPDATE sessions SET turn_count = ${requests.length}, last_modified_at = NOW()
-            WHERE id = ${sessionId}
-        `;
-    }
-
-    private async upsertMessage(
-        tx: postgres.TransactionSql,
-        sessionId: number,
-        requestIndex: number,
-        request: any,
-        rawEventId: number,
-    ): Promise<void> {
-        const userContent = request?.message?.content || request?.message?.text || '';
-        const assistantContent = this.extractResponseContent(request?.response);
-
-        // User message
-        const userHash = computeContentHash(userContent);
-        const [existingUser] = await tx`
-            SELECT id FROM messages
-            WHERE session_id = ${sessionId} AND request_index = ${requestIndex} AND role = 'user' AND deleted_at IS NULL
-        `;
-
-        if (!existingUser) {
-            const userId = await this.createMessage(tx, sessionId, requestIndex, 'user', userContent, userHash);
-            await this.addVersion(tx, userId, 1, userContent, userHash, 'created', rawEventId);
-        }
-
-        // Assistant message (if response exists)
-        if (assistantContent) {
-            const assistantHash = computeContentHash(assistantContent);
-            const [existingAssistant] = await tx`
-                SELECT id FROM messages
-                WHERE session_id = ${sessionId} AND request_index = ${requestIndex} AND role = 'assistant' AND deleted_at IS NULL
-            `;
-
-            if (!existingAssistant) {
-                const assistantId = await this.createMessage(tx, sessionId, requestIndex, 'assistant', assistantContent, assistantHash);
-                await this.addVersion(tx, assistantId, 1, assistantContent, assistantHash, 'created', rawEventId);
-            }
-        }
     }
 
     private async createMessage(
@@ -389,135 +501,7 @@ export class EventProcessor {
         `;
     }
 
-    private async handleNewTurns(
-        tx: postgres.TransactionSql,
-        sessionId: number,
-        newItems: unknown[],
-        currentTurnCount: number,
-        rawEventId: number,
-    ): Promise<void> {
-        for (let i = 0; i < newItems.length; i++) {
-            const requestIndex = currentTurnCount + i;
-            const req = newItems[i] as any;
-            await this.upsertMessage(tx, sessionId, requestIndex, req, rawEventId);
-        }
-
-        await tx`
-            UPDATE sessions SET turn_count = ${currentTurnCount + newItems.length}, last_modified_at = NOW()
-            WHERE id = ${sessionId}
-        `;
-    }
-
-    private async handleFork(
-        tx: postgres.TransactionSql,
-        sessionId: number,
-        forkAt: number,
-        newItems: unknown[],
-        rawEventId: number,
-    ): Promise<void> {
-        // 1. Soft-delete all messages at request_index >= forkAt
-        await tx`
-            UPDATE messages
-            SET deleted_at = NOW(), deletion_reason = 'forked'
-            WHERE session_id = ${sessionId}
-              AND request_index >= ${forkAt}
-              AND deleted_at IS NULL
-        `;
-
-        // 2. Create new messages from fork items
-        for (let i = 0; i < newItems.length; i++) {
-            const requestIndex = forkAt + i;
-            const req = newItems[i] as any;
-
-            const userContent = req?.message?.content || req?.message?.text || '';
-            const userHash = computeContentHash(userContent);
-            const userId = await this.createMessage(tx, sessionId, requestIndex, 'user', userContent, userHash);
-            await this.addVersion(tx, userId, 1, userContent, userHash, 'forked', rawEventId);
-
-            const assistantContent = this.extractResponseContent(req?.response);
-            if (assistantContent) {
-                const assistantHash = computeContentHash(assistantContent);
-                const assistantId = await this.createMessage(tx, sessionId, requestIndex, 'assistant', assistantContent, assistantHash);
-                await this.addVersion(tx, assistantId, 1, assistantContent, assistantHash, 'forked', rawEventId);
-            }
-        }
-
-        // 3. Update session
-        await tx`
-            UPDATE sessions SET
-                turn_count = ${forkAt + newItems.length},
-                fork_count = fork_count + 1,
-                version = version + 1,
-                last_modified_at = NOW()
-            WHERE id = ${sessionId}
-        `;
-    }
-
-    private extractResponseContent(response: any): string {
-        if (!response) return '';
-        if (typeof response === 'string') return response;
-
-        // VS Code chat response format: the response field is an array of parts.
-        // Text parts have kind=undefined with a `value` string.
-        // Thinking parts have kind='thinking' with a `value` string.
-        if (Array.isArray(response)) {
-            return response
-                .filter((part: any) => part && (part.kind === undefined || part.kind === 'thinking') && typeof part.value === 'string')
-                .map((part: any) => part.value)
-                .filter(Boolean)
-                .join('');
-        }
-
-        // Fallback for older/alternate formats
-        if (response.value) return response.value;
-        if (response.result) return typeof response.result === 'string' ? response.result : '';
-        return '';
-    }
-
-    private async syncAssistantMessage(
-        tx: postgres.TransactionSql,
-        sessionId: number,
-        requestIndex: number,
-        request: any,
-        rawEventId: number,
-    ): Promise<void> {
-        const assistantContent = this.extractResponseContent(request?.response);
-        if (!assistantContent) return;
-
-        const assistantHash = computeContentHash(assistantContent);
-        const [existing] = await tx`
-            SELECT id, content_hash FROM messages
-            WHERE session_id = ${sessionId}
-              AND request_index = ${requestIndex}
-              AND role = 'assistant'
-              AND deleted_at IS NULL
-        `;
-
-        if (!existing) {
-            const assistantId = await this.createMessage(
-                tx, sessionId, requestIndex, 'assistant', assistantContent, assistantHash,
-            );
-            await this.addVersion(tx, assistantId, 1, assistantContent, assistantHash, 'created', rawEventId);
-        } else if (!Buffer.from(existing.content_hash).equals(assistantHash)) {
-            // Content changed — update the message and record a new version
-            const [lastVersion] = await tx`
-                SELECT MAX(version) AS v FROM message_versions WHERE message_id = ${existing.id}
-            `;
-            const nextVersion = (lastVersion?.v ?? 1) + 1;
-            await tx`
-                UPDATE messages
-                SET content = ${assistantContent}, content_hash = ${assistantHash}, finalized_at = NOW()
-                WHERE id = ${existing.id}
-            `;
-            await this.addVersion(tx, existing.id, nextVersion, assistantContent, assistantHash, 'updated', rawEventId);
-        }
-    }
-
     shutdown(): void {
         this.isShuttingDown = true;
-        for (const [, timer] of this.streamingTimers) {
-            clearTimeout(timer);
-        }
-        this.streamingTimers.clear();
     }
 }
